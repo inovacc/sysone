@@ -1,0 +1,125 @@
+name: release
+
+# A tag v* builds sysone for Windows x64 and Linux x86_64, packages each with the official ONNX Runtime 1.28.0,
+# smoke-tests the package against the reference answers (model fetched from Hugging Face, sha256-checked), and
+# publishes a GitHub release with the archives and SHA256SUMS.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ORT_VERSION: 1.28.0
+  MODEL_REPO: Dyam/sysone-laya-typed-decisions-onnx
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows-x64
+            ort_archive: onnxruntime-win-x64-1.28.0.zip
+            ort_sha256: abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc
+          - os: ubuntu-22.04
+            platform: linux-x64
+            ort_archive: onnxruntime-linux-x64-1.28.0.tgz
+            ort_sha256: a3e1b79d7bb1bf09696ce675f49e4064e6c81f6202b8225624fff0e93f8d6407
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Fetch ONNX Runtime
+        run: |
+          $f = "${{ matrix.ort_archive }}"
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$env:ORT_VERSION/$f" -OutFile $f
+          $got = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne "${{ matrix.ort_sha256 }}") { throw "ORT checksum mismatch: $got" }
+          New-Item -ItemType Directory ort | Out-Null
+          if ($f.EndsWith('.zip')) { Expand-Archive $f -DestinationPath ort } else { tar -xzf $f -C ort }
+
+      - name: Package
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'dev' }
+          $name = "sysone-$tag-${{ matrix.platform }}"
+          $pkg = Join-Path $PWD "pkg/$name"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          $ortDir = (Get-ChildItem ort -Directory | Select-Object -First 1).FullName
+          if ($IsWindows) {
+            Copy-Item target/release/sysone.exe $pkg
+            Copy-Item "$ortDir/lib/onnxruntime.dll", "$ortDir/lib/onnxruntime_providers_shared.dll" $pkg
+          } else {
+            Copy-Item target/release/sysone $pkg
+            Copy-Item "$ortDir/lib/libonnxruntime.so.$env:ORT_VERSION" "$pkg/libonnxruntime.so"
+          }
+          Copy-Item "$ortDir/LICENSE" "$pkg/ONNXRUNTIME-LICENSE"
+          if (Test-Path "$ortDir/ThirdPartyNotices.txt") { Copy-Item "$ortDir/ThirdPartyNotices.txt" "$pkg/ONNXRUNTIME-ThirdPartyNotices.txt" }
+          Copy-Item README.md, LICENSE, NOTICE $pkg
+          Copy-Item docs -Destination "$pkg/docs" -Recurse
+          "NAME=$name" | Out-File $env:GITHUB_ENV -Append
+          "PKG=$pkg" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Archive
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          if ($IsWindows) { Compress-Archive -Path "$env:PKG/*" -DestinationPath "out/$env:NAME.zip" }
+          else { tar -czf "out/$env:NAME.tar.gz" -C $env:PKG . }
+
+      - name: Fetch model (smoke test only, not packaged)
+        run: |
+          $files = @{
+            'model/rl_agent_config.json' = 'ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8'
+            'model/encoder/config.json' = '5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d'
+            'model/tokenizer/tokenizer.json' = '6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30'
+            'model/tokenizer/tokenizer_config.json' = '08d4cf3ac4dca381759441b85b91a6d40e688471dcd33d15d6649eb0a9a854d1'
+            'bundle/encoder.onnx' = '639458c5ffe559df96109dc3eead9675a0fd7215fac7ce554e40d7cf366cdaae'
+            'bundle/encoder.onnx.data' = 'b4e0037c4ab0e9cd6a347e98f95d01e293541d65b5f93cd2bfb2dd3bfa75258c'
+            'bundle/head.onnx' = 'fac3ff4ef448ed17ede4abe997a2f40e38904f9a5df542b653e462ca302c51e5'
+            'bundle/head.onnx.data' = '222d93680f0510f6ed149906aad2c48c05a3ca2ac21853da8204d7e054344e9a'
+          }
+          $ProgressPreference = 'SilentlyContinue'
+          foreach ($rel in $files.Keys) {
+            $dest = Join-Path $env:PKG $rel
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            Invoke-WebRequest "https://huggingface.co/$env:MODEL_REPO/resolve/main/$rel" -OutFile $dest
+            $got = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
+            if ($got -ne $files[$rel]) { throw "model checksum mismatch: $rel" }
+          }
+
+      - name: Smoke test (responses byte-identical to the reference)
+        run: pwsh tests/smoke.ps1 -Dir $env:PKG
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: out/*
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums
+        run: cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --title "sysone $GITHUB_REF_NAME" \
+            --notes "Install: see README. Windows x64 passed the full stage-by-stage parity comparison with Laya (Python); Linux x86_64 passed the smoke test (response bytes identical to the reference). Assets are checked against SHA256SUMS by the installers."

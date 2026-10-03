@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/pipeline", "crates/cli"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+license = "BSD-3-Clause"
+
+[workspace.dependencies]
+anyhow = "1"
+# Shortest-and-closest float digits, as CPython's repr (V-13).
+ryu = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+sha2 = "0.10"
+# Same release train as the oracle's Python tokenizers 0.23.2; default features keep `onig`, the regex
+# engine the Python wheel is built with (docs/laya-model-analysis.md §4).
+tokenizers = "=0.23.2"
+# load-dynamic: use the same libonnxruntime 1.28.0 binary as the refonnx leg (docs/architecture.md §4).
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-27"] }
+pipeline = { path = "crates/pipeline" }
+
+[profile.release]
+debug = false

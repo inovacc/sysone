@@ -1,0 +1,7 @@
+target/
+pkg/
+out/
+ort/
+model/
+bundle/
+*.part

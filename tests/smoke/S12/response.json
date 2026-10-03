@@ -1,0 +1,1 @@
+{"model":"laya-rl-agent","answers":{"only":{"type":"choice","choice":"support","probabilities":{"support":1.0},"confidence":1.0,"answer_confidence":1.0,"action":{"act_probability":1.0}}},"usage":{"input_tokens":33,"output_tokens":0}}

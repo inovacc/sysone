@@ -1,0 +1,25 @@
+sysone
+Copyright (c) 2026 Dyam Marcano. Licensed under the BSD 3-Clause License (see LICENSE).
+
+This software is a Rust implementation of the inference path of Laya and is designed to run
+third-party components, which keep their own licenses:
+
+Laya (reference implementation)
+  https://github.com/NandhaKishorM/laya  (version 0.3.20, commit 4066d5d5)
+  Copyright ConvAI Innovations / Laya contributors. Licensed under the Apache License 2.0.
+  sysone ports its request validation, text rendering, sequence building, calibration and
+  decoding logic; no Laya source file is redistributed.
+
+laya-typed-decisions (model weights)
+  https://huggingface.co/convaiinnovations/laya-typed-decisions  (revision 1a793eb5)
+  Licensed under the Apache License 2.0. The installer downloads an ONNX export of these weights
+  (https://huggingface.co/Dyam/sysone-laya-typed-decisions-onnx), a derivative distributed under
+  the same license with this attribution. The tokenizer files are the checkpoint's own.
+
+ONNX Runtime 1.28.0
+  https://github.com/microsoft/onnxruntime
+  Copyright (c) Microsoft Corporation. Licensed under the MIT License. The release packages
+  include Microsoft's official onnxruntime binaries unmodified, with their license file.
+
+"System One" and "Jev" are terms of TypeSafe AI. sysone implements a compatible HTTP protocol and
+is not affiliated with or endorsed by TypeSafe AI.

@@ -1,0 +1,1 @@
+{"state": "Payment of $49.00 for invoice INV-2291 failed because the card on file expired yesterday.", "questions": {"topic": {"type": "choice", "instructions": "Is this ticket about billing or about a technical problem?", "criteria": {"billing": "payments, invoices, cards, refunds", "technical": "bugs, outages, errors in the product"}}}}
