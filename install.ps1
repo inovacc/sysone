@@ -30,16 +30,28 @@ $ModelFiles = [ordered]@{
 
 function Say([string] $m) { Write-Host "sysone: $m" }
 function Sha256([string] $p) { (Get-FileHash -Algorithm SHA256 $p).Hash.ToLower() }
+# Downloads resume from a kept .part file and abort a stalled transfer (under 10 KB/s for 60 s), then retry: a
+# plain Invoke-WebRequest has no stall timeout and was seen to hang forever mid-file on the 1.6 GB graph.
+$Curl = (Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+function Download([string] $url, [string] $out) {
+    if ($Curl) {
+        for ($i = 1; $i -le 8; $i++) {
+            & $Curl -fL --retry 5 --retry-delay 3 --connect-timeout 30 --speed-limit 10240 --speed-time 60 -C - -o $out $url
+            if ($LASTEXITCODE -eq 0) { return }
+            Say "transfer interrupted (curl exit $LASTEXITCODE), resuming ($i/8)"
+            Start-Sleep -Seconds 3
+        }
+        throw "download failed: $url"
+    }
+    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 3600   # no curl.exe: no resume
+}
 function Fetch([string] $url, [string] $dest, [string] $sha) {
     if ((Test-Path $dest) -and (Sha256 $dest) -eq $sha) { Say "ok      $($dest.Substring($Dir.Length + 1))"; return }
     New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
     $tmp = "$dest.part"
-    for ($i = 1; $i -le 3; $i++) {
-        try { Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing; break }
-        catch { if ($i -eq 3) { throw "download failed: $url ($_)" }; Start-Sleep -Seconds (2 * $i) }
-    }
+    if (-not ((Test-Path $tmp) -and (Sha256 $tmp) -eq $sha)) { Download $url $tmp }
     $got = Sha256 $tmp
-    if ($got -ne $sha) { Remove-Item $tmp -Force; throw "checksum mismatch for $url`n  expected $sha`n  got      $got" }
+    if ($got -ne $sha) { Remove-Item $tmp -Force; throw "checksum mismatch for $url`n  expected $sha`n  got      $got (re-run to download again)" }
     Move-Item $tmp $dest -Force
     Say "fetched $($dest.Substring($Dir.Length + 1))"
 }
@@ -62,8 +74,9 @@ $zipSha = ($sumText -split "`n" | Where-Object { $_ -match "\s\*?$([regex]::Esca
 if (-not $zipSha) { throw "SHA256SUMS has no line for $zipName" }
 $zipPath = Join-Path $env:TEMP $zipName
 if (-not ((Test-Path $zipPath) -and (Sha256 $zipPath) -eq $zipSha.ToLower())) {
-    Invoke-WebRequest -Uri $zipAsset.browser_download_url -OutFile $zipPath -UseBasicParsing
-    if ((Sha256 $zipPath) -ne $zipSha.ToLower()) { throw "checksum mismatch for $zipName" }
+    Remove-Item $zipPath -ErrorAction SilentlyContinue
+    Download $zipAsset.browser_download_url $zipPath
+    if ((Sha256 $zipPath) -ne $zipSha.ToLower()) { Remove-Item $zipPath -Force; throw "checksum mismatch for $zipName" }
 }
 Get-Process -Name sysone -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Dir*" } | ForEach-Object { throw "sysone is running from $Dir (pid $($_.Id)); stop it first" }
 Expand-Archive -Path $zipPath -DestinationPath $Dir -Force

@@ -26,7 +26,12 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
 fetch() { # url dest sha
     if [ -f "$2" ] && [ "$(sha "$2")" = "$3" ]; then say "ok      ${2#"$DIR"/}"; return; fi
     mkdir -p "$(dirname "$2")"
-    curl -fL --retry 3 --retry-delay 2 -o "$2.part" "$1" || die "download failed: $1"
+    # resume a kept .part; abort a stalled transfer (<10 KB/s for 60 s) and retry
+    i=0
+    until curl -fL --retry 5 --retry-delay 3 --connect-timeout 30 --speed-limit 10240 --speed-time 60 -C - -o "$2.part" "$1"; do
+        i=$((i + 1)); [ "$i" -lt 8 ] || die "download failed: $1"
+        say "transfer interrupted, resuming ($i/8)"; sleep 3
+    done
     got="$(sha "$2.part")"
     [ "$got" = "$3" ] || { rm -f "$2.part"; die "checksum mismatch for $1 (expected $3, got $got)"; }
     mv "$2.part" "$2"
